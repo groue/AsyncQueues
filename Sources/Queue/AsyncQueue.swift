@@ -116,35 +116,21 @@ public final class AsyncQueue: Sendable {
     /// - Parameters operation: An async closure.
     /// - Returns: a Task that executes `operation`.
     @discardableResult
-    public func addTask<Success: Sendable>(
+    public func addTask<Success>(
         @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async -> Success
     ) -> Task<Success, Never> {
         // Compiler does not see that operation is only called once.
         typealias SendableOperation = @Sendable () async -> Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        // Semaphore-like streams: signal is `continuation.finish()`,
-        // wait is `for await _ in stream { }`
-        let (startStream, startContinuation) = AsyncStream.makeStream(of: Never.self)
-        let (endStream, endContinuation) = AsyncStream.makeStream(of: Never.self)
-        
-        // Create the task that runs `operation`. It waits for
-        // `startStream` and signals `endStream`.
-        let addedTask = Task<Success, Never> {
-            defer { endContinuation.finish() }
-            // Ignore cancellation while waiting for startContinuation.
-            await Task { for await _ in startStream { } }.value
-            return await operation()
+        return enqueue { start, end in
+            Task {
+                defer { end.signal() }
+                await start.wait()
+                
+                return await operation()
+            }
         }
-        
-        // Enqueue a closure that signals `startStream` and
-        // waits for `endStream`
-        queueContinuation.yield {
-            startContinuation.finish()
-            for await _ in endStream { }
-        }
-        
-        return addedTask
     }
     
     /// Returns an unstructured Task that runs the given throwing operation.
@@ -154,34 +140,69 @@ public final class AsyncQueue: Sendable {
     /// - Parameter operation: An async closure.
     /// - Returns: a Task that executes `operation`.
     @discardableResult
-    public func addTask<Success: Sendable>(
+    public func addTask<Success>(
         @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async throws -> Success
     ) -> Task<Success, any Error> {
         // Compiler does not see that operation is only called once.
         typealias SendableOperation = @Sendable () async throws -> Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        // Semaphore-like streams: signal is `continuation.finish()`,
-        // wait is `for await _ in stream { }`
-        let (startStream, startContinuation) = AsyncStream.makeStream(of: Never.self)
-        let (endStream, endContinuation) = AsyncStream.makeStream(of: Never.self)
-        
-        // Create the task that runs `operation`. It waits for
-        // `startStream` and signals `endStream`.
-        let addedTask = Task<Success, any Error> {
-            defer { endContinuation.finish() }
-            // Ignore cancellation while waiting for startContinuation.
-            await Task { for await _ in startStream { } }.value
-            return try await operation()
+        return enqueue { start, end in
+            Task {
+                defer { end.signal() }
+                await start.wait()
+                
+                return try await operation()
+            }
         }
+    }
+    
+    private func enqueue<Success, Failure>(
+        _ makeTask: (
+            _ start: Semaphore,
+            _ end: Semaphore
+        ) -> Task<Success, Failure>
+    ) -> Task<Success, Failure> {
+        // Create the task that runs `operation`. It waits for `start` and signals `end`.
+        let start = Semaphore()
+        let end = Semaphore()
+        let addedTask = makeTask(start, end)
         
-        // Enqueue a closure that signals `startStream` and
-        // waits for `endStream`
+        // Enqueue a closure that signals `start` and waits for `end`
         queueContinuation.yield {
-            startContinuation.finish()
-            for await _ in endStream { }
+            start.signal()
+            await end.wait()
         }
         
         return addedTask
+    }
+}
+
+// MARK: - AsyncStream-based Semaphore
+
+/// A "semaphore" that can be awaited and signaled only once.
+fileprivate struct Semaphore {
+    private let stream: AsyncStream<Never>
+    private let continuation: AsyncStream<Never>.Continuation
+    
+    init() {
+        (stream, continuation) = AsyncStream.makeStream()
+    }
+    
+    /// Wait until semaphore is signaled.
+    func wait() async {
+        await Task {
+            await waitUnlessCancelled()
+        }.value
+    }
+    
+    /// Wait until semaphore is signaled, or the current task is cancelled.
+    func waitUnlessCancelled() async {
+        for await _ in stream { }
+    }
+    
+    /// Signal the semaphore.
+    func signal() {
+        continuation.finish()
     }
 }
