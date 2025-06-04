@@ -23,7 +23,7 @@ public final class AsyncQueue: Sendable {
     typealias Operation = @Sendable () async -> Void
     
     /// Helps `perform` handle cancellation.
-    private enum TaskCancellationState {
+    fileprivate enum TaskCancellationState {
         case notStarted
         case cancellable(@Sendable () -> Void)
         case cancelled
@@ -53,7 +53,11 @@ public final class AsyncQueue: Sendable {
     
     /// Returns the result of the given operation.
     ///
-    /// This method inherits cancellation of the wrapping Task.
+    /// This method inherits cancellation of the current Task.
+    ///
+    /// - Important: If the current task is cancelled, this method still
+    ///   runs the `operation` closure, after all previously enqueued
+    ///   operations. See also ``performUnlessCancelled(operation:)``.
     ///
     /// - Parameter operation: An async closure.
     /// - Returns: The result of `operation`
@@ -71,47 +75,64 @@ public final class AsyncQueue: Sendable {
             // task that runs the operation and just return the result.
             // We have to wrap the result in a Sendable type because Task
             // requires a Sendable result type. It is unchecked, but safe.
-            let task: Task<UncheckedSendable<Success>, any Error>
-            let isCancelled: Bool
-            (task, isCancelled) = stateMutex.withLock { state in
-                let task = addTask {
+            let task = stateMutex.startTask {
+                addTask {
                     let result = try await operation()
                     return UncheckedSendable(value: result)
                 }
-                
-                if case .cancelled = state {
-                    return (task, true)
-                } else {
-                    state = .cancellable(task.cancel)
-                    return (task, false)
-                }
             }
             
-            if isCancelled {
-                task.cancel()
-            }
             return try await task.value.value
         } onCancel: {
-            let cancel: (@Sendable () -> Void)?
-            cancel = stateMutex.withLock { state in
-                defer {
-                    state = .cancelled
-                }
-                if case .cancellable(let cancel) = state {
-                    return cancel
-                } else {
-                    return nil
+            stateMutex.cancel()
+        }
+    }
+    
+    /// Returns the result of the given operation.
+    ///
+    /// This method inherits cancellation of the current Task.
+    ///
+    /// If the current task is cancelled before the previously enqueued
+    /// operations complete, `operation` is not executed and this method
+    /// throws a `CancellationError`.
+    ///
+    /// - Parameter operation: An async closure.
+    /// - Returns: The result of `operation`
+    /// - Throws: The error of `operation`, or `CancellationError` if the
+    ///   current task is cancelled before `operation` could start.
+    public func performUnlessCancelled<Success>(
+        @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async throws -> sending Success
+    ) async throws -> sending Success {
+        // Compiler does not see that operation is only called once.
+        typealias SendableOperation = @Sendable () async throws -> sending Success
+        let operation = unsafeBitCast(operation, to: SendableOperation.self)
+        
+        let stateMutex = Mutex(TaskCancellationState.notStarted)
+        return try await withTaskCancellationHandler {
+            // We accept a non-Sendable Success type because we discard the
+            // task that runs the operation and just return the result.
+            // We have to wrap the result in a Sendable type because Task
+            // requires a Sendable result type. It is unchecked, but safe.
+            let task = stateMutex.startTask {
+                addDiscardableTask {
+                    let result = try await operation()
+                    return UncheckedSendable(value: result)
                 }
             }
             
-            cancel?()
+            return try await task.value.value
+        } onCancel: {
+            stateMutex.cancel()
         }
     }
     
     /// Returns an unstructured Task that runs the given
     /// nonthrowing operation.
     ///
-    /// The returned task does not inherit cancellation of the wrapping Task.
+    /// You need to keep a reference to the task if you want to cancel it
+    /// by calling the `Task.cancel()` method. Discarding your reference to
+    /// the task doesn’t implicitly cancel that task, it only makes it
+    /// impossible for you to explicitly cancel the task.
     ///
     /// - Parameters operation: An async closure.
     /// - Returns: a Task that executes `operation`.
@@ -135,7 +156,10 @@ public final class AsyncQueue: Sendable {
     
     /// Returns an unstructured Task that runs the given throwing operation.
     ///
-    /// The returned task does not inherit cancellation of the wrapping Task.
+    /// You need to keep a reference to the task if you want to cancel it
+    /// by calling the `Task.cancel()` method. Discarding your reference to
+    /// the task doesn’t implicitly cancel that task, it only makes it
+    /// impossible for you to explicitly cancel the task.
     ///
     /// - Parameter operation: An async closure.
     /// - Returns: a Task that executes `operation`.
@@ -152,6 +176,42 @@ public final class AsyncQueue: Sendable {
                 defer { end.signal() }
                 await start.wait()
                 
+                return try await operation()
+            }
+        }
+    }
+    
+    /// Returns an unstructured Task that runs the given operation.
+    ///
+    /// You need to keep a reference to the task if you want to cancel it
+    /// by calling the `Task.cancel()` method. Discarding your reference to
+    /// the task doesn’t implicitly cancel that task, it only makes it
+    /// impossible for you to explicitly cancel the task.
+    ///
+    /// If the returned task is cancelled before the previously enqueued
+    /// operations complete, `operation` is not executed and the task
+    /// throws a `CancellationError`. In this case, it is
+    /// considered "discarded".
+    ///
+    /// - Parameter operation: An async closure.
+    /// - Returns: a Task that executes `operation`.
+    @discardableResult
+    public func addDiscardableTask<Success>(
+        @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async throws -> Success
+    ) -> Task<Success, any Error> {
+        // Compiler does not see that operation is only called once.
+        typealias SendableOperation = @Sendable () async throws -> Success
+        let operation = unsafeBitCast(operation, to: SendableOperation.self)
+        
+        return enqueue { start, end in
+            Task {
+                defer { end.signal() }
+                
+                // Stop waiting if task is cancelled.
+                await start.waitUnlessCancelled()
+                
+                // Discard operation if task is cancelled.
+                try Task.checkCancellation()
                 return try await operation()
             }
         }
@@ -204,5 +264,46 @@ fileprivate struct Semaphore {
     /// Signal the semaphore.
     func signal() {
         continuation.finish()
+    }
+}
+
+extension Mutex<AsyncQueue.TaskCancellationState> {
+    func startTask<Success, Failure>(
+        _ makeTask: () -> Task<Success, Failure>
+    ) -> Task<Success, Failure> {
+        let task: Task<Success, Failure>
+        let isCancelled: Bool
+        (task, isCancelled) = withLock { state in
+            let task = makeTask()
+            
+            if case .cancelled = state {
+                return (task, true)
+            } else {
+                state = .cancellable(task.cancel)
+                return (task, false)
+            }
+        }
+        
+        if isCancelled {
+            task.cancel()
+        }
+        
+        return task
+    }
+    
+    func cancel() {
+        let cancel: (@Sendable () -> Void)?
+        cancel = withLock { state in
+            defer {
+                state = .cancelled
+            }
+            if case .cancellable(let cancel) = state {
+                return cancel
+            } else {
+                return nil
+            }
+        }
+        
+        cancel?()
     }
 }
