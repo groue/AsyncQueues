@@ -1,12 +1,24 @@
 /// A queue that serializes async operations, discards cancelled ones, and
 /// can coalesce subsequent operations.
 ///
-/// Usage:
+/// ## Overview
+///
+/// `CoalescingAsyncQueue` serialize asynchronous operations. Enqueued
+/// operations run one after the other, in order, without overlapping.
+///
+/// Cancelled operations are eagerly discarded, without waiting for the
+/// completion of previously enqueued operations. In this case, they throw
+/// `CancellationError`.
+///
+/// An operation that runs with the [`.discardable`](<doc:CoalescingAsyncQueue/Policy/discardable>)
+/// policy is cancelled if it is replaced by another operation.
+///
+/// For example:
 ///
 /// ```swift
 /// let queue = CoalescingAsyncQueue()
 ///
-/// // `perform(operation:)` returns the result of the async operation.
+/// // `perform` returns the result of the async operation.
 /// // The operation is cancelled if the current task is cancelled.
 /// let value = try await queue.perform {
 ///     try await someValue()
@@ -17,15 +29,24 @@
 /// queue.addTask {
 ///     try await doSomething()
 /// }
+///
+/// // This task will be cancelled if another operation is enqueued.
+/// queue.addTask(policy: .discardable) {
+///     try await doSomething()
+/// }
 /// ```
 ///
-/// Async operations are started with a policy, one of:
+/// ## Topics
 ///
-/// - `required`: An operation run with the `required` policy is not
-///   cancelled by subsequent operations.
+/// ### Creating a Queue
 ///
-/// - `discardable`: An operation run with `discardable` policy is cancelled
-///   by subsequent operations.
+/// - ``init()``
+///
+/// ### Performing Operations
+///
+/// - ``perform(operation:)``
+/// - ``perform(policy:operation:)``
+/// - ``addTask(policy:operation:)``
 public struct CoalescingAsyncQueue: Sendable {
     /// Controls the execution of an operation started by `CoalescingAsyncQueue`.
     public enum Policy: Sendable {

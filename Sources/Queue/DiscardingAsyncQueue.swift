@@ -1,11 +1,20 @@
 /// A queue that serializes async operations and discards cancelled ones.
 ///
-/// Usage:
+/// ## Overview
+///
+/// `DiscardingAsyncQueue` serialize asynchronous operations. Enqueued
+/// operations run one after the other, in order, without overlapping.
+///
+/// Cancelled operations are eagerly discarded, without waiting for the
+/// completion of previously enqueued operations. In this case, they throw
+/// `CancellationError`.
+///
+/// For example:
 ///
 /// ```swift
 /// let queue = DiscardingAsyncQueue()
 ///
-/// // `perform(operation:)` returns the result of the async operation.
+/// // `perform` returns the result of the async operation.
 /// // The operation is cancelled if the current task is cancelled.
 /// let value = try await queue.perform {
 ///     try await someValue()
@@ -17,6 +26,17 @@
 ///     try await doSomething()
 /// }
 /// ```
+///
+/// ## Topics
+///
+/// ### Creating a Queue
+///
+/// - ``init()``
+///
+/// ### Performing Operations
+///
+/// - ``perform(operation:)``
+/// - ``addTask(operation:)``
 public struct DiscardingAsyncQueue: Sendable {
     private let primitiveQueue = PrimitiveAsyncQueue()
     

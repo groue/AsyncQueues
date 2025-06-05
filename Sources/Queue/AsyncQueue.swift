@@ -1,11 +1,20 @@
 /// A queue that serializes async operations.
 ///
-/// Usage:
+/// ## Overview
+///
+/// `AsyncQueue` serialize asynchronous operations. Enqueued operations
+/// run one after the other, in order, without overlapping.
+///
+/// Both throwing and non-throwing operations are supported. A cancelled
+/// operation can only handle cancellation when it runs, i.e. after the
+/// completion of previously enqueued operations.
+///
+/// For example:
 ///
 /// ```swift
 /// let queue = AsyncQueue()
 ///
-/// // `perform(operation:)` returns the result of the async operation.
+/// // `perform` returns the result of the async operation.
 /// // The operation is cancelled if the current task is cancelled.
 /// let value = try await queue.perform {
 ///     try await someValue()
@@ -17,6 +26,18 @@
 ///     try await doSomething()
 /// }
 /// ```
+///
+/// ## Topics
+///
+/// ### Creating a Queue
+///
+/// - ``init()``
+///
+/// ### Performing Operations
+///
+/// - ``perform(operation:)``
+/// - ``addTask(operation:)->Task<Success,Never>``
+/// - ``addTask(operation:)->Task<Success,Error>``
 public struct AsyncQueue: Sendable {
     private let primitiveQueue = PrimitiveAsyncQueue()
     
