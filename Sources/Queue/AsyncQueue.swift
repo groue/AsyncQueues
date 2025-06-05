@@ -147,32 +147,3 @@ public final class AsyncQueue: Sendable {
         return addedTask
     }
 }
-
-// MARK: - AsyncStream-based Semaphore
-
-/// A "semaphore" that can be awaited and signaled only once.
-fileprivate struct Semaphore {
-    private let stream: AsyncStream<Never>
-    private let continuation: AsyncStream<Never>.Continuation
-    
-    init() {
-        (stream, continuation) = AsyncStream.makeStream()
-    }
-    
-    /// Wait until semaphore is signaled.
-    func wait() async {
-        await Task {
-            await waitUnlessCancelled()
-        }.value
-    }
-    
-    /// Wait until semaphore is signaled, or the current task is cancelled.
-    func waitUnlessCancelled() async {
-        for await _ in stream { }
-    }
-    
-    /// Signal the semaphore.
-    func signal() {
-        continuation.finish()
-    }
-}
