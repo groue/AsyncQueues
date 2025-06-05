@@ -19,30 +19,15 @@
 ///     try await doSomething()
 /// }
 /// ```
-public final class AsyncQueue: Sendable {
-    typealias Operation = @Sendable () async -> Void
-    
+public struct AsyncQueue: Sendable {
     /// Helps `perform` return a `sending` result.
     private struct UncheckedSendable<Value>: @unchecked Sendable {
         var value: Value
     }
     
-    private let queueContinuation: AsyncStream<Operation>.Continuation
+    private let primitiveQueue = PrimitiveAsyncQueue()
     
-    public init() {
-        // Execute, in order, all operations submitted to `queueContinuation`.
-        let (queueStream, queueContinuation) = AsyncStream.makeStream(of: Operation.self)
-        self.queueContinuation = queueContinuation
-        Task {
-            for await operation in queueStream {
-                await operation()
-            }
-        }
-    }
-    
-    deinit {
-        queueContinuation.finish()
-    }
+    public init() { }
     
     /// Returns the result of the given operation.
     ///
@@ -93,7 +78,7 @@ public final class AsyncQueue: Sendable {
         typealias SendableOperation = @Sendable () async -> Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        return enqueue { start, end in
+        return primitiveQueue.enqueue { start, end in
             Task {
                 defer { end.signal() }
                 await start.wait()
@@ -117,7 +102,7 @@ public final class AsyncQueue: Sendable {
         typealias SendableOperation = @Sendable () async throws -> Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        return enqueue { start, end in
+        return primitiveQueue.enqueue { start, end in
             Task {
                 defer { end.signal() }
                 await start.wait()
@@ -125,25 +110,5 @@ public final class AsyncQueue: Sendable {
                 return try await operation()
             }
         }
-    }
-    
-    private func enqueue<Success, Failure>(
-        _ makeTask: (
-            _ start: Semaphore,
-            _ end: Semaphore
-        ) -> Task<Success, Failure>
-    ) -> Task<Success, Failure> {
-        // Create the task that runs `operation`. It waits for `start` and signals `end`.
-        let start = Semaphore()
-        let end = Semaphore()
-        let addedTask = makeTask(start, end)
-        
-        // Enqueue a closure that signals `start` and waits for `end`
-        queueContinuation.yield {
-            start.signal()
-            await end.wait()
-        }
-        
-        return addedTask
     }
 }
