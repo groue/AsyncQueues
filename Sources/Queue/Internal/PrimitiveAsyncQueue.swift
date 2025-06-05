@@ -19,15 +19,9 @@ final class PrimitiveAsyncQueue: Sendable {
         queueContinuation.finish()
     }
     
-    func enqueue<Result>(
-        _ operation: (
-            _ start: Semaphore,
-            _ end: Semaphore
-        ) -> Result
-    ) -> Result {
+    func makeSemaphores() -> (start: Semaphore, end: Semaphore) {
         let start = Semaphore()
         let end = Semaphore()
-        let operation = operation(start, end)
         
         // Enqueue a closure that signals `start` and waits for `end`
         queueContinuation.yield {
@@ -35,6 +29,6 @@ final class PrimitiveAsyncQueue: Sendable {
             await end.wait()
         }
         
-        return operation
+        return (start: start, end: end)
     }
 }

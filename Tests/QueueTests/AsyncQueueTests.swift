@@ -3,6 +3,38 @@ import Testing
 
 @Suite(.timeLimit(.minutes(1)))
 struct AsyncQueueTests {
+    @TaskLocal static var local: Int? = nil
+    
+    // MARK: - Current Task
+    
+    @Test
+    func perform_executes_operation_in_the_current_task() async throws {
+        let queue = AsyncQueue()
+        
+        let task = Task {
+            await queue.perform {
+                withUnsafeCurrentTask { currentTask in
+                    currentTask?.cancel()
+                }
+                #expect(Task.isCancelled)
+            }
+            #expect(Task.isCancelled)
+        }
+        
+        await task.value
+    }
+    
+    @Test
+    func perform_inherits_task_locals() async throws {
+        let queue = AsyncQueue()
+        
+        let number = Int.random(in: 0..<1000)
+        await Self.$local.withValue(number) {
+            await queue.perform {
+                #expect(Self.local == number)
+            }
+        }
+    }
     
     // MARK: - Value and Error
     
@@ -58,6 +90,45 @@ struct AsyncQueueTests {
     }
     
     // MARK: - Ordering
+    
+    @Test
+    func perform_is_ordered_with_nonthrowing_task() async throws {
+        let valuesMutex = Mutex<[Int]>([])
+        let queue = AsyncQueue()
+        for i in 0...5000 {
+            queue.addTask {
+                valuesMutex.withLock { $0.append(i * 2) }
+            }
+            await queue.perform {
+                valuesMutex.withLock { $0.append(i * 2 + 1) }
+            }
+        }
+        let values = await queue.perform {
+            valuesMutex.withLock { $0 }
+        }
+        #expect(values == Array(0...10001))
+    }
+    
+    @Test
+    func perform_is_ordered_with_throwing_task() async throws {
+        let valuesMutex = Mutex<[Int]>([])
+        let queue = AsyncQueue()
+        func handleValue(_ value: Int) throws {
+            valuesMutex.withLock { $0.append(value) }
+        }
+        for i in 0...5000 {
+            queue.addTask {
+                try handleValue(i * 2)
+            }
+            try await queue.perform {
+                try handleValue(i * 2 + 1)
+            }
+        }
+        let values = await queue.perform {
+            valuesMutex.withLock { $0 }
+        }
+        #expect(values == Array(0...10001))
+    }
     
     @Test
     func nonthrowing_tasks_are_ordered() async throws {

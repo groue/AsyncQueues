@@ -20,11 +20,6 @@
 /// }
 /// ```
 public struct AsyncQueue: Sendable {
-    /// Helps `perform` return a `sending` result.
-    private struct UncheckedSendable<Value>: @unchecked Sendable {
-        var value: Value
-    }
-    
     private let primitiveQueue = PrimitiveAsyncQueue()
     
     public init() { }
@@ -37,30 +32,12 @@ public struct AsyncQueue: Sendable {
     /// - Returns: The result of `operation`
     /// - Throws: The error of `operation`.
     public func perform<Success>(
-        @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async throws -> sending Success
+        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> sending Success
     ) async rethrows -> sending Success {
-        // Compiler does not see that operation is only called once.
-        typealias SendableOperation = @Sendable () async throws -> sending Success
-        let operation = unsafeBitCast(operation, to: SendableOperation.self)
-        
-        let cancellationMutex = Mutex(TaskCancellationState.notStarted)
-        return try await withTaskCancellationHandler {
-            let task = cancellationMutex.startTask {
-                addTask {
-                    // We accept a non-Sendable Success type because we
-                    // discard the task that runs the operation and just
-                    // return the result.
-                    //
-                    // We have to wrap this result in a Sendable type
-                    // because Task requires it. It is unchecked, but safe.
-                    try await UncheckedSendable(value: operation())
-                }
-            }
-            
-            return try await task.value.value
-        } onCancel: {
-            cancellationMutex.cancel()
-        }
+        let (start, end) = primitiveQueue.makeSemaphores()
+        defer { end.signal() }
+        await start.wait()
+        return try await operation()
     }
     
     /// Returns an unstructured Task that runs the given
@@ -78,13 +55,12 @@ public struct AsyncQueue: Sendable {
         typealias SendableOperation = @Sendable () async -> Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        return primitiveQueue.enqueue { start, end in
-            Task {
-                defer { end.signal() }
-                await start.wait()
-                
-                return await operation()
-            }
+        let (start, end) = primitiveQueue.makeSemaphores()
+        return Task {
+            defer { end.signal() }
+            await start.wait()
+            
+            return await operation()
         }
     }
     
@@ -102,13 +78,12 @@ public struct AsyncQueue: Sendable {
         typealias SendableOperation = @Sendable () async throws -> Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        return primitiveQueue.enqueue { start, end in
-            Task {
-                defer { end.signal() }
-                await start.wait()
-                
-                return try await operation()
-            }
+        let (start, end) = primitiveQueue.makeSemaphores()
+        return Task {
+            defer { end.signal() }
+            await start.wait()
+            
+            return try await operation()
         }
     }
 }
