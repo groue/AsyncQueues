@@ -22,13 +22,6 @@
 public final class AsyncQueue: Sendable {
     typealias Operation = @Sendable () async -> Void
     
-    /// Helps `perform` handle cancellation.
-    private enum TaskCancellationState {
-        case notStarted
-        case cancellable(@Sendable () -> Void)
-        case cancelled
-    }
-    
     /// Helps `perform` return a `sending` result.
     private struct UncheckedSendable<Value>: @unchecked Sendable {
         var value: Value
@@ -65,46 +58,23 @@ public final class AsyncQueue: Sendable {
         typealias SendableOperation = @Sendable () async throws -> sending Success
         let operation = unsafeBitCast(operation, to: SendableOperation.self)
         
-        let stateMutex = Mutex(TaskCancellationState.notStarted)
+        let cancellationMutex = Mutex(TaskCancellationState.notStarted)
         return try await withTaskCancellationHandler {
-            // We accept a non-Sendable Success type because we discard the
-            // task that runs the operation and just return the result.
-            // We have to wrap the result in a Sendable type because Task
-            // requires a Sendable result type. It is unchecked, but safe.
-            let task: Task<UncheckedSendable<Success>, any Error>
-            let isCancelled: Bool
-            (task, isCancelled) = stateMutex.withLock { state in
-                let task = addTask {
-                    let result = try await operation()
-                    return UncheckedSendable(value: result)
-                }
-                
-                if case .cancelled = state {
-                    return (task, true)
-                } else {
-                    state = .cancellable(task.cancel)
-                    return (task, false)
+            let task = cancellationMutex.startTask {
+                addTask {
+                    // We accept a non-Sendable Success type because we
+                    // discard the task that runs the operation and just
+                    // return the result.
+                    //
+                    // We have to wrap this result in a Sendable type
+                    // because Task requires it. It is unchecked, but safe.
+                    try await UncheckedSendable(value: operation())
                 }
             }
             
-            if isCancelled {
-                task.cancel()
-            }
             return try await task.value.value
         } onCancel: {
-            let cancel: (@Sendable () -> Void)?
-            cancel = stateMutex.withLock { state in
-                defer {
-                    state = .cancelled
-                }
-                if case .cancellable(let cancel) = state {
-                    return cancel
-                } else {
-                    return nil
-                }
-            }
-            
-            cancel?()
+            cancellationMutex.cancel()
         }
     }
     
