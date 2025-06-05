@@ -5,16 +5,14 @@
 /// ```swift
 /// let queue = AsyncQueue()
 ///
-/// // `perform(operation:)` waits until the async operation has
-/// // completed. The operation is cancelled if the current task
-/// // is cancelled.
+/// // `perform(operation:)` returns the result of the async operation.
+/// // The operation is cancelled if the current task is cancelled.
 /// let value = try await queue.perform {
 ///     try await someValue()
 /// }
 ///
 /// // `addTask` returns a new unstructured task that executes the
-/// // async operation. As all unstructured tasks, it is not cancelled if
-/// // the current task is cancelled.
+/// // async operation.
 /// queue.addTask {
 ///     try await doSomething()
 /// }
@@ -26,10 +24,15 @@ public struct AsyncQueue: Sendable {
     
     /// Returns the result of the given operation.
     ///
-    /// This method inherits cancellation of the wrapping Task.
+    /// The `operation` closure runs after previously enqueued operations
+    /// are completed.
     ///
-    /// - Parameter operation: An async closure.
-    /// - Returns: The result of `operation`
+    /// If the current task is cancelled, this method still runs the
+    /// `operation` closure. Check `Task.isCancelled` or
+    /// `Task.checkCancellation()` to detect cancellation.
+    ///
+    /// - Parameter operation: The operation to perform.
+    /// - Returns: The result of `operation`.
     /// - Throws: The error of `operation`.
     public func perform<Success>(
         @_inheritActorContext @_implicitSelfCapture operation: () async throws -> sending Success
@@ -43,9 +46,19 @@ public struct AsyncQueue: Sendable {
     /// Returns an unstructured Task that runs the given
     /// nonthrowing operation.
     ///
-    /// The returned task does not inherit cancellation of the wrapping Task.
+    /// The `operation` closure runs after previously enqueued operations
+    /// are completed.
     ///
-    /// - Parameters operation: An async closure.
+    /// If the returned task is cancelled, it still runs the `operation`
+    /// closure. Check `Task.isCancelled` or `Task.checkCancellation()` to
+    /// detect cancellation.
+    ///
+    /// You need to keep a reference to the task if you want to cancel it
+    /// by calling the `Task.cancel()` method. Discarding your reference to
+    /// the task doesn’t implicitly cancel that task, it only makes it
+    /// impossible for you to explicitly cancel the task.
+    ///
+    /// - Parameters operation: The operation to perform.
     /// - Returns: a Task that executes `operation`.
     @discardableResult
     public func addTask<Success>(
@@ -66,9 +79,19 @@ public struct AsyncQueue: Sendable {
     
     /// Returns an unstructured Task that runs the given throwing operation.
     ///
-    /// The returned task does not inherit cancellation of the wrapping Task.
+    /// The `operation` closure runs after previously enqueued operations
+    /// are completed.
     ///
-    /// - Parameter operation: An async closure.
+    /// If the returned task is cancelled, it still runs the `operation`
+    /// closure. Check `Task.isCancelled` or `Task.checkCancellation()` to
+    /// detect cancellation.
+    ///
+    /// You need to keep a reference to the task if you want to cancel it
+    /// by calling the `Task.cancel()` method. Discarding your reference to
+    /// the task doesn’t implicitly cancel that task, it only makes it
+    /// impossible for you to explicitly cancel the task.
+    ///
+    /// - Parameter operation: The operation to perform.
     /// - Returns: a Task that executes `operation`.
     @discardableResult
     public func addTask<Success>(
