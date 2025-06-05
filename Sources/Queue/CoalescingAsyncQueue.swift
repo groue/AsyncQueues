@@ -1,0 +1,194 @@
+/// A queue that serializes async operations, discards cancelled ones, and
+/// can coalesce subsequent operations.
+///
+/// Usage:
+///
+/// ```swift
+/// let queue = CoalescingAsyncQueue()
+///
+/// // `perform(operation:)` returns the result of the async operation.
+/// // The operation is cancelled if the current task is cancelled.
+/// let value = try await queue.perform {
+///     try await someValue()
+/// }
+///
+/// // `addTask` returns a new unstructured task that executes the
+/// // async operation.
+/// queue.addTask {
+///     try await doSomething()
+/// }
+/// ```
+///
+/// Async operations are started with a policy, one of:
+///
+/// - `required`: An operation run with the `required` policy is not
+///   cancelled by subsequent operations.
+///
+/// - `discardable`: An operation run with `discardable` policy is cancelled
+///   by subsequent operations.
+public struct CoalescingAsyncQueue: Sendable {
+    /// Controls the execution of an operation started by `CoalescingAsyncQueue`.
+    public enum Policy: Sendable {
+        /// An operation run with the `required` policy is not cancelled by
+        /// subsequent operations.
+        case required
+        
+        /// An operation run with `discardable` policy is cancelled by
+        /// subsequent operations.
+        case discardable
+    }
+    
+    /// Helps `perform` return a `sending` result.
+    private struct UncheckedSendable<Value>: @unchecked Sendable {
+        var value: Value
+    }
+    
+    private let primitiveQueue = PrimitiveAsyncQueue()
+    private let cancellableMutex = Mutex<(@Sendable () -> Void)?>(nil)
+    
+    public init() { }
+    
+    /// Returns the result of the given operation.
+    ///
+    /// The `operation` closure runs after previously enqueued operations
+    /// are completed.
+    ///
+    /// If the current task is cancelled before the previously enqueued
+    /// operations complete, `operation` is not executed and this method
+    /// throws a `CancellationError`. The operation is
+    /// considered "discarded". Otherwise, `operation` can check
+    /// `Task.isCancelled` or `Task.checkCancellation()` to
+    /// detect cancellation.
+    ///
+    /// - Parameter operation: The operation to perform.
+    /// - Returns: The result of `operation`.
+    /// - Throws: The error of `operation`, or `CancellationError` if the
+    ///   current task is cancelled before the previously enqueued
+    ///   operations complete.
+    public func perform<Success>(
+        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> sending Success
+    ) async throws -> sending Success {
+        // First cancel eventual discardable task
+        let cancel = cancellableMutex.withLock { cancel in
+            defer { cancel = nil }
+            return cancel
+        }
+        cancel?()
+        
+        let (start, end) = primitiveQueue.makeSemaphores()
+        defer { end.signal() }
+        
+        // Stop waiting if task is cancelled.
+        try await start.waitUnlessCancelled()
+        
+        return try await operation()
+    }
+    
+    /// Returns the result of the given operation.
+    ///
+    /// The `operation` closure runs after previously enqueued operations
+    /// are completed.
+    ///
+    /// The operation is cancelled when the current task is cancelled, or,
+    /// if the policy is `.discardable`, when another operation is enqueued.
+    ///
+    /// If the operation is cancelled before the previously enqueued
+    /// operations complete, `operation` is not executed and this method
+    /// throws a `CancellationError`. Otherwise, `operation` can check
+    /// `Task.isCancelled` or `Task.checkCancellation()` to
+    /// detect cancellation.
+    ///
+    /// - Parameter policy: The coalescing policy of the operation.
+    /// - Parameter operation: The operation to perform.
+    /// - Returns: The result of `operation`.
+    /// - Throws: The error of `operation`, or `CancellationError` if the
+    ///   current task is cancelled before the previously enqueued
+    ///   operations complete.
+    public func perform<Success>(
+        policy: Policy,
+        @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async throws -> sending Success
+    ) async throws -> sending Success {
+        // When policy is .required, we could run the operation in the
+        // current task. But when policy is .discardable, we need a distinct
+        // task that can be independently cancelled.
+        //
+        // Let's avoid surprises, and always run the operation in a
+        // distinct task.
+        
+        // Compiler does not see that operation is only called once.
+        typealias SendableOperation = @Sendable () async throws -> sending Success
+        let operation = unsafeBitCast(operation, to: SendableOperation.self)
+        
+        let cancellationMutex = Mutex(TaskCancellationState.notStarted)
+        return try await withTaskCancellationHandler {
+            let task = cancellationMutex.startTask {
+                addTask(policy: policy) {
+                    // We accept a non-Sendable Success type because we
+                    // discard the task that runs the operation and just
+                    // return the result.
+                    //
+                    // We have to wrap this result in a Sendable type
+                    // because Task requires it. It is unchecked, but safe.
+                    try await UncheckedSendable(value: operation())
+                }
+            }
+            
+            return try await task.value.value
+        } onCancel: {
+            cancellationMutex.cancelTask()
+        }
+    }
+    
+    /// Returns an unstructured Task that runs the given operation.
+    ///
+    /// The operation is cancelled when the returned task is cancelled, or,
+    /// if the policy is `.discardable`, when another operation is enqueued.
+    ///
+    /// If the operation is cancelled before the previously enqueued
+    /// operations complete, `operation` is not executed and the task
+    /// throws a `CancellationError`. Otherwise, `operation` can check
+    /// `Task.isCancelled` or `Task.checkCancellation()` to
+    /// detect cancellation.
+    ///
+    /// You need to keep a reference to the task if you want to cancel it
+    /// by calling the `Task.cancel()` method. Discarding your reference to
+    /// the task doesn’t implicitly cancel that task, it only makes it
+    /// impossible for you to explicitly cancel the task.
+    ///
+    /// - Parameter policy: The coalescing policy of the operation.
+    /// - Parameter operation: The operation to perform.
+    /// - Returns: a Task that executes `operation`.
+    @discardableResult
+    public func addTask<Success>(
+        policy: Policy = .required,
+        @_inheritActorContext @_implicitSelfCapture operation: sending @escaping () async throws -> Success
+    ) -> Task<Success, any Error> {
+        // Compiler does not see that operation is only called once.
+        typealias SendableOperation = @Sendable () async throws -> Success
+        let operation = unsafeBitCast(operation, to: SendableOperation.self)
+        
+        let (task, cancel) = cancellableMutex.withLock { cancel in
+            let (start, end) = primitiveQueue.makeSemaphores()
+            let task = Task {
+                defer { end.signal() }
+                
+                // Stop waiting if task is cancelled.
+                try await start.waitUnlessCancelled()
+                
+                return try await operation()
+            }
+            
+            let toCancel = cancel
+            switch policy {
+            case .required:
+                cancel = nil
+            case .discardable:
+                cancel = task.cancel
+            }
+            return (task, toCancel)
+        }
+        
+        cancel?()
+        return task
+    }
+}

@@ -44,7 +44,7 @@ extension Mutex<TaskCancellationState> {
         return task
     }
     
-    func cancel() {
+    func cancelTask() {
         let cancel: (@Sendable () -> Void)?
         cancel = withLock { state in
             defer {
