@@ -87,8 +87,8 @@ public struct CoalescingAsyncQueue: Sendable {
     ///   current task is cancelled before the previously enqueued
     ///   operations complete.
     public func perform<Success>(
-        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> sending Success
-    ) async throws -> sending Success {
+        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> Success
+    ) async throws -> Success {
         // First cancel eventual discardable task
         let cancel = cancellableMutex.withLock { cancel in
             defer { cancel = nil }

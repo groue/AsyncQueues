@@ -56,8 +56,8 @@ public struct AsyncQueue: Sendable {
     /// - Returns: The result of `operation`.
     /// - Throws: The error of `operation`.
     public func perform<Success>(
-        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> sending Success
-    ) async rethrows -> sending Success {
+        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> Success
+    ) async rethrows -> Success {
         let (start, end) = primitiveQueue.makeSemaphores()
         defer { end.signal() }
         await start.wait()

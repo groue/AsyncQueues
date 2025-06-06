@@ -80,6 +80,94 @@ struct CoalescingAsyncQueueTests {
     }
     
     @Test
+    func perform_returns_non_sendable_value() async throws {
+        class NonSendable { }
+        
+        @globalActor actor MyGlobalActor {
+            static let shared = MyGlobalActor()
+        }
+        
+        let queue = CoalescingAsyncQueue()
+        
+        do {
+            let value = NonSendable()
+            let result = try await queue.perform {
+                return value
+            }
+            #expect(result === value)
+        }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform { @MyGlobalActor in
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        do {
+            let _ = try await queue.perform {
+                return NonSendable()
+            }
+        }
+        
+        do {
+            let _ = try await queue.perform { @MyGlobalActor in
+                return NonSendable()
+            }
+        }
+    }
+    
+    @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
+    func perform_returns_non_sendable_value(
+        policy: CoalescingAsyncQueue.Policy
+    ) async throws {
+        class NonSendable { }
+        
+        @globalActor actor MyGlobalActor {
+            static let shared = MyGlobalActor()
+        }
+        
+        let queue = CoalescingAsyncQueue()
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform(policy: policy) {
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform(policy: policy) { @MyGlobalActor in
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        do {
+            let _ = try await queue.perform(policy: policy) {
+                return NonSendable()
+            }
+        }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let _ = try await queue.perform(policy: policy) { @MyGlobalActor in
+        //         return NonSendable()
+        //     }
+        // }
+    }
+
+    @Test
     func perform_rethrows_thrown_error() async throws {
         struct TestError: Error { }
         let queue = CoalescingAsyncQueue()
