@@ -1,18 +1,18 @@
+import AsyncQueues
 import Testing
-@testable import Queue
 
 @Suite(.timeLimit(.minutes(1)))
-struct DiscardingAsyncQueueTests {
+struct AsyncQueueTests {
     @TaskLocal static var local: Int? = nil
     
     // MARK: - Current Task
     
     @Test
     func perform_executes_operation_in_the_current_task() async throws {
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         
         let task = Task {
-            try await queue.perform {
+            await queue.perform {
                 withUnsafeCurrentTask { currentTask in
                     currentTask?.cancel()
                 }
@@ -21,16 +21,16 @@ struct DiscardingAsyncQueueTests {
             #expect(Task.isCancelled)
         }
         
-        try await task.value
+        await task.value
     }
     
     @Test
     func perform_inherits_task_locals() async throws {
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         
         let number = Int.random(in: 0..<1000)
-        try await Self.$local.withValue(number) {
-            try await queue.perform {
+        await Self.$local.withValue(number) {
+            await queue.perform {
                 #expect(Self.local == number)
             }
         }
@@ -39,11 +39,11 @@ struct DiscardingAsyncQueueTests {
     // MARK: - Value and Error
     
     @Test
-    func perform_returns_operation_value() async throws {
-        let queue = DiscardingAsyncQueue()
+    func perform_returns_nonthrowing_operation_value() async throws {
+        let queue = AsyncQueue()
         
         for value in 0..<10 {
-            let result = try await queue.perform {
+            let result = await queue.perform {
                 return value
             }
             #expect(result == value)
@@ -58,11 +58,11 @@ struct DiscardingAsyncQueueTests {
             static let shared = MyGlobalActor()
         }
         
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         
         do {
             let value = NonSendable()
-            let result = try await queue.perform {
+            let result = await queue.perform {
                 return value
             }
             #expect(result === value)
@@ -72,20 +72,20 @@ struct DiscardingAsyncQueueTests {
         //
         // do {
         //     let value = NonSendable()
-        //     let result = try await queue.perform { @MyGlobalActor in
+        //     let result = await queue.perform { @MyGlobalActor in
         //         return value
         //     }
         //     #expect(result === value)
         // }
         
         do {
-            let _ = try await queue.perform {
+            let _ = await queue.perform {
                 return NonSendable()
             }
         }
         
         do {
-            let _ = try await queue.perform { @MyGlobalActor in
+            let _ = await queue.perform { @MyGlobalActor in
                 return NonSendable()
             }
         }
@@ -94,7 +94,7 @@ struct DiscardingAsyncQueueTests {
     @Test
     func perform_rethrows_thrown_error() async throws {
         struct TestError: Error { }
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         
         await #expect(throws: TestError.self) {
             try await queue.perform {
@@ -104,14 +104,14 @@ struct DiscardingAsyncQueueTests {
     }
     
     @Test
-    func added_task_returns_operation_value() async throws {
-        let queue = DiscardingAsyncQueue()
+    func added_task_returns_nonthrowing_operation_value() async throws {
+        let queue = AsyncQueue()
         
         for value in 0..<10 {
             let task = queue.addTask {
                 return value
             }
-            let result = try await task.value
+            let result = await task.value
             #expect(result == value)
         }
     }
@@ -119,7 +119,7 @@ struct DiscardingAsyncQueueTests {
     @Test
     func added_task_rethrows_thrown_error() async throws {
         struct TestError: Error { }
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         
         let task = queue.addTask {
             throw TestError()
@@ -133,69 +133,124 @@ struct DiscardingAsyncQueueTests {
     // MARK: - Ordering
     
     @Test
-    func perform_is_ordered_with_task() async throws {
+    func perform_is_ordered_with_nonthrowing_task() async throws {
         let valuesMutex = Mutex<[Int]>([])
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         for i in 0...5000 {
             queue.addTask {
                 valuesMutex.withLock { $0.append(i * 2) }
             }
-            try await queue.perform {
+            await queue.perform {
                 valuesMutex.withLock { $0.append(i * 2 + 1) }
             }
         }
-        let values = try await queue.perform {
+        let values = await queue.perform {
             valuesMutex.withLock { $0 }
         }
         #expect(values == Array(0...10001))
     }
     
     @Test
-    func tasks_are_ordered() async throws {
+    func perform_is_ordered_with_throwing_task() async throws {
         let valuesMutex = Mutex<[Int]>([])
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
+        func handleValue(_ value: Int) throws {
+            valuesMutex.withLock { $0.append(value) }
+        }
+        for i in 0...5000 {
+            queue.addTask {
+                try handleValue(i * 2)
+            }
+            try await queue.perform {
+                try handleValue(i * 2 + 1)
+            }
+        }
+        let values = await queue.perform {
+            valuesMutex.withLock { $0 }
+        }
+        #expect(values == Array(0...10001))
+    }
+    
+    @Test
+    func nonthrowing_tasks_are_ordered() async throws {
+        let valuesMutex = Mutex<[Int]>([])
+        let queue = AsyncQueue()
         for i in 0...10000 {
             queue.addTask {
                 valuesMutex.withLock { $0.append(i) }
             }
         }
-        let values = try await queue.perform {
+        let values = await queue.perform {
             valuesMutex.withLock { $0 }
         }
         #expect(values == Array(0...10000))
     }
     
     @Test
-    func cancelled_tasks_are_ordered() async throws {
+    func cancelled_nonthrowing_tasks_are_ordered() async throws {
         let valuesMutex = Mutex<[Int]>([])
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         for i in 0...10000 {
             let task = queue.addTask {
                 valuesMutex.withLock { $0.append(i) }
             }
-            if Bool.random() {
-                task.cancel()
-            }
+            task.cancel()
         }
-        let values = try await queue.perform {
+        let values = await queue.perform {
             valuesMutex.withLock { $0 }
         }
-        #expect(values.count > 1000)
-        #expect(values == values.sorted())
+        #expect(values == Array(0...10000))
+    }
+    
+    @Test
+    func throwing_tasks_are_ordered() async throws {
+        let valuesMutex = Mutex<[Int]>([])
+        let queue = AsyncQueue()
+        func handleValue(_ value: Int) throws {
+            valuesMutex.withLock { $0.append(value) }
+        }
+        for i in 0...10000 {
+            queue.addTask {
+                try handleValue(i)
+            }
+        }
+        let values = await queue.perform {
+            valuesMutex.withLock { $0 }
+        }
+        #expect(values == Array(0...10000))
+    }
+    
+    @Test
+    func cancelled_throwing_tasks_are_ordered() async throws {
+        let valuesMutex = Mutex<[Int]>([])
+        let queue = AsyncQueue()
+        func handleValue(_ value: Int) throws {
+            valuesMutex.withLock { $0.append(value) }
+        }
+        for i in 0...10000 {
+            let task = queue.addTask {
+                try handleValue(i)
+            }
+            task.cancel()
+        }
+        let values = await queue.perform {
+            valuesMutex.withLock { $0 }
+        }
+        #expect(values == Array(0...10000))
     }
     
     // MARK: - Cancellation
     
     @Test
-    func operation_is_cancelled_by_late_wrapper_task_cancellation() async throws {
-        let queue = DiscardingAsyncQueue()
+    func nonthrowing_operation_is_cancelled_by_late_wrapper_task_cancellation() async throws {
+        let queue = AsyncQueue()
         
         // Semaphore-like stream: signal is `continuation.finish()`,
         // wait is `for await _ in stream { }`
         let (didStartStream, didStartContinuation) = AsyncStream.makeStream(of: Never.self)
         
         let wrapperTask = Task {
-            try await queue.perform {
+            await queue.perform {
                 didStartContinuation.finish()
                 
                 // Wait until task is cancelled.
@@ -207,22 +262,46 @@ struct DiscardingAsyncQueueTests {
         
         for await _ in didStartStream { }
         wrapperTask.cancel()
-        try await wrapperTask.value
+        await wrapperTask.value
     }
     
     @Test
-    func operation_is_cancelled_by_early_wrapper_task_cancellation() async throws {
-        let queue = DiscardingAsyncQueue()
+    func throwing_operation_is_cancelled_by_late_wrapper_task_cancellation() async throws {
+        let queue = AsyncQueue()
+        
+        // Semaphore-like stream: signal is `continuation.finish()`,
+        // wait is `for await _ in stream { }`
+        let (didStartStream, didStartContinuation) = AsyncStream.makeStream(of: Never.self)
+        
+        let wrapperTask = Task {
+            _ = await #expect(throws: CancellationError.self) {
+                try await queue.perform {
+                    didStartContinuation.finish()
+                    
+                    // Wait until task is cancelled.
+                    let didCancelStream = AsyncStream<Never> { _ in }
+                    for await _ in didCancelStream { }
+                    try Task.checkCancellation()
+                }
+            }
+        }
+        
+        for await _ in didStartStream { }
+        wrapperTask.cancel()
+        await wrapperTask.value
+    }
+    
+    @Test
+    func nonthrowing_operation_is_cancelled_by_early_wrapper_task_cancellation() async throws {
+        let queue = AsyncQueue()
         
         let wrapperTask = Task {
             // Wait until task is cancelled.
             let didCancelStream = AsyncStream<Never> { _ in }
             for await _ in didCancelStream { }
             
-            await #expect(throws: CancellationError.self) {
-                try await queue.perform {
-                    Issue.record("Operation should not run")
-                }
+            await queue.perform {
+                #expect(Task.isCancelled)
             }
         }
         
@@ -231,38 +310,8 @@ struct DiscardingAsyncQueueTests {
     }
     
     @Test
-    func cancelled_task_does_not_wait_for_previous_operations() async throws {
-        let queue = DiscardingAsyncQueue()
-        
-        // GIVEN a first task that does not end until the test is complete.
-        let (firstTaskStream, firstTaskContinuation) = AsyncStream.makeStream(of: Never.self)
-        defer { firstTaskContinuation.finish() }
-        queue.addTask {
-            for await _ in firstTaskStream { }
-        }
-        
-        // GIVEN a discardable task enqueued after the first task.
-        let discardableTask = queue.addTask {
-            Issue.record("Operation should not run")
-        }
-        
-        // WHEN the discardable task is cancelled,
-        discardableTask.cancel()
-        
-        // THEN it completes with `CancellationError` before the first task has ended.
-        await #expect(throws: CancellationError.self) {
-            try await discardableTask.value
-        }
-    }
-    
-    @Test
-    func cancelled_operation_does_not_wait_for_previous_operations() async throws {
-        let queue = DiscardingAsyncQueue()
-        
-        let (firstTaskStream, firstTaskContinuation) = AsyncStream.makeStream(of: Never.self)
-        queue.addTask {
-            for await _ in firstTaskStream { }
-        }
+    func throwing_operation_is_cancelled_by_early_wrapper_task_cancellation() async throws {
+        let queue = AsyncQueue()
         
         let wrapperTask = Task {
             // Wait until task is cancelled.
@@ -271,15 +320,7 @@ struct DiscardingAsyncQueueTests {
             
             await #expect(throws: CancellationError.self) {
                 try await queue.perform {
-                    Issue.record("Operation should not run")
-                }
-            }
-            
-            firstTaskContinuation.finish()
-            
-            await #expect(throws: CancellationError.self) {
-                try await queue.perform {
-                    Issue.record("Operation should not run")
+                    try Task.checkCancellation()
                 }
             }
         }
@@ -292,18 +333,26 @@ struct DiscardingAsyncQueueTests {
     
     @Test
     func preconditionSerialized() async throws {
-        let queue = DiscardingAsyncQueue()
+        let queue = AsyncQueue()
         
         // Test all ways to run an operation:
         // - perform
-        // - addTask
+        // - addTask (non-throwing)
+        // - addTask (throwing)
         
-        try await queue.perform {
+        await queue.perform {
             queue.preconditionSerialized()
         }
         
+        await queue
+            .addTask {
+                queue.preconditionSerialized()
+            }
+            .value
+        
         try await queue
             .addTask {
+                try Task.checkCancellation()
                 queue.preconditionSerialized()
             }
             .value
@@ -311,36 +360,77 @@ struct DiscardingAsyncQueueTests {
     
     @Test
     func preconditionSerialized_for_nested_queues() async throws {
-        let queue1 = DiscardingAsyncQueue()
-        let queue2 = DiscardingAsyncQueue()
+        let queue1 = AsyncQueue()
+        let queue2 = AsyncQueue()
         
         // Test all combinations:
         // - perform
-        // - addTask
+        // - addTask (non-throwing)
+        // - addTask (throwing)
         
-        try await queue2.perform {
-            try await queue1.perform {
+        await queue2.perform {
+            await queue1.perform {
                 queue2.preconditionSerialized()
                 queue1.preconditionSerialized()
             }
             
-            try await queue1
+            await queue1
                 .addTask {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+            
+            try? await queue1
+                .addTask {
+                    try Task.checkCancellation()
                     queue2.preconditionSerialized()
                     queue1.preconditionSerialized()
                 }
                 .value
         }
         
-        try await queue2
+        await queue2
             .addTask {
-                try await queue1.perform {
+                await queue1.perform {
                     queue2.preconditionSerialized()
                     queue1.preconditionSerialized()
                 }
                 
+                await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+                
+                try? await queue1
+                    .addTask {
+                        try Task.checkCancellation()
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
+        
+        try await queue2
+            .addTask {
+                await queue1.perform {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+                
                 try await queue1
                     .addTask {
+                        try Task.checkCancellation()
                         queue2.preconditionSerialized()
                         queue1.preconditionSerialized()
                     }
@@ -355,10 +445,10 @@ struct DiscardingAsyncQueueTests {
     func perform_closure_inherits_isolation() {
         // This test passes if it compiles without any error or warning.
         @MainActor class MyClass {
-            let queue = DiscardingAsyncQueue()
+            let queue = AsyncQueue()
             
-            private func enqueue() async throws {
-                try await queue.perform {
+            private func enqueue() async {
+                await queue.perform {
                     // Synchronous call is OK because the closure inherits
                     // the current isolation.
                     isolatedSynchronousMethod()
@@ -369,10 +459,10 @@ struct DiscardingAsyncQueueTests {
         }
         
         actor MyActor {
-            let queue = DiscardingAsyncQueue()
+            let queue = AsyncQueue()
             
-            private func enqueue() async throws {
-                try await queue.perform {
+            private func enqueue() async {
+                await queue.perform {
                     // Synchronous call is OK because the closure inherits
                     // the current isolation.
                     isolatedSynchronousMethod()
@@ -387,9 +477,9 @@ struct DiscardingAsyncQueueTests {
     func addTask_closure_inherits_isolation() {
         // This test passes if it compiles without any error or warning.
         @MainActor class MyClass {
-            let queue = DiscardingAsyncQueue()
+            let queue = AsyncQueue()
             
-            private func enqueue() -> Task<Void, any Error> {
+            private func enqueue() -> Task<Void, Never> {
                 queue.addTask {
                     // Synchronous call is OK because the closure inherits
                     // the current isolation.
@@ -401,9 +491,9 @@ struct DiscardingAsyncQueueTests {
         }
         
         actor MyActor {
-            let queue = DiscardingAsyncQueue()
+            let queue = AsyncQueue()
             
-            private func enqueue() -> Task<Void, any Error> {
+            private func enqueue() -> Task<Void, Never> {
                 queue.addTask {
                     // Synchronous call is OK because the closure inherits
                     // the current isolation.

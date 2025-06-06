@@ -1,5 +1,5 @@
+import AsyncQueues
 import Testing
-@testable import Queue
 
 @Suite(.timeLimit(.minutes(1)))
 struct CoalescingAsyncQueueTests {

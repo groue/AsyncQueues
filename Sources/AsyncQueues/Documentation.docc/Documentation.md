@@ -1,4 +1,4 @@
-# ``Queue``
+# ``AsyncQueues``
 
 Utilities for serializing asynchronous operations.
 

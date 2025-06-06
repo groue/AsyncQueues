@@ -4,7 +4,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Queue",
+    name: "AsyncQueues",
     platforms: [
         .iOS(.v16),
         .macOS(.v10_15),
@@ -12,17 +12,17 @@ let package = Package(
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
-            name: "Queue",
-            targets: ["Queue"]),
+            name: "AsyncQueues",
+            targets: ["AsyncQueues"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "Queue"),
+            name: "AsyncQueues"),
         .testTarget(
-            name: "QueueTests",
-            dependencies: ["Queue"]
+            name: "AsyncQueuesTests",
+            dependencies: ["AsyncQueues"]
         ),
     ]
 )
