@@ -513,11 +513,15 @@ struct CoalescingAsyncQueueTests {
         let task = queue.addTask(policy: .discardable) {
             Issue.record("Operation should not run")
         }
-        queue.addTask(policy: policy) { }
+        let subsequentTask = queue.addTask(policy: policy) {
+            // Subsequent task does not run before previous task is cancelled.
+            #expect(task.isCancelled)
+        }
         
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
+        try await subsequentTask.value
     }
     
     @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
@@ -537,9 +541,12 @@ struct CoalescingAsyncQueueTests {
         }
         
         for await _ in didStartStream { }
-        queue.addTask(policy: policy) { }
+        let subsequentTask = queue.addTask(policy: policy) {
+            // Subsequent task does not run before previous task is cancelled.
+            #expect(task.isCancelled)
+        }
         
-        try await task.value
+        try await subsequentTask.value
     }
     
     @Test
@@ -557,9 +564,10 @@ struct CoalescingAsyncQueueTests {
         }
         
         for await _ in didStartStream { }
-        try await queue.perform { }
-        
-        try await task.value
+        try await queue.perform {
+            // Subsequent task does not run before previous task is cancelled.
+            #expect(task.isCancelled)
+        }
     }
     
     @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
@@ -579,9 +587,10 @@ struct CoalescingAsyncQueueTests {
         }
         
         for await _ in didStartStream { }
-        try await queue.perform(policy: policy) { }
-        
-        try await task.value
+        try await queue.perform(policy: policy) {
+            // Subsequent task does not run before previous task is cancelled.
+            #expect(task.isCancelled)
+        }
     }
     
     @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
@@ -603,20 +612,22 @@ struct CoalescingAsyncQueueTests {
         let queue = CoalescingAsyncQueue()
         
         let (didStartStream, didStartContinuation) = AsyncStream.makeStream(of: Never.self)
-        let (secondTaskStream, secondTaskContinuation) = AsyncStream.makeStream(of: Never.self)
-        queue.addTask(policy: .required) {
+        let (subsequentTaskStream, subsequentTaskContinuation) = AsyncStream.makeStream(of: Never.self)
+        let task = queue.addTask(policy: .required) {
             didStartContinuation.finish()
             
-            // Wait until other task is added
-            for await _ in secondTaskStream { }
+            // Wait until subsequent task is added
+            for await _ in subsequentTaskStream { }
             #expect(!Task.isCancelled)
         }
         
         for await _ in didStartStream { }
-        let secondTask = queue.addTask(policy: policy) { }
-        secondTaskContinuation.finish()
+        let subsequentTask = queue.addTask(policy: policy) {
+            #expect(!task.isCancelled)
+        }
+        subsequentTaskContinuation.finish()
         
-        try await secondTask.value
+        try await subsequentTask.value
     }
     
     @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
