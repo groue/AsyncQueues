@@ -21,21 +21,20 @@ The Swift standard library does not provide any ready-made solution for this tas
 
 // Setup
 typealias Operation = @Sendable () async -> Void
-let (queueStream, queueContinuation) = AsyncStream.makeStream(of: Operation.self)
-let serialTask = Task {
-    for await operation in queueStream {
+let (stream, continuation) = AsyncStream.makeStream(of: Operation.self)
+Task {
+    for await operation in stream {
         await operation()
     }
 }
 
 // Serialize operations
-queueContinuation.yield { print("1") }
-queueContinuation.yield { print("2") }
-queueContinuation.yield { print("3") }
+continuation.yield { print("1") }
+continuation.yield { print("2") }
+continuation.yield { print("3") }
 
 // Cleanup
-queueContinuation.finish()
-await serialTask.value
+continuation.finish()
 ```
 
 </details>
