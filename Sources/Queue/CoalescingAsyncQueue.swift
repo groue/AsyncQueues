@@ -100,7 +100,7 @@ public struct CoalescingAsyncQueue: Sendable {
         cancel?()
         
         let (start, end) = primitiveQueue.makeSemaphores()
-        return try await withTaskId {
+        return try await withQueueID {
             defer { end.signal() }
             
             // Stop waiting if task is cancelled.
@@ -196,7 +196,7 @@ public struct CoalescingAsyncQueue: Sendable {
         let (task, cancel) = cancellableMutex.withLock { cancel in
             let (start, end) = primitiveQueue.makeSemaphores()
             let task = Task {
-                try await withTaskId {
+                try await withQueueID {
                     defer { end.signal() }
                     
                     // Stop waiting if task is cancelled.
@@ -239,7 +239,7 @@ extension CoalescingAsyncQueue {
         precondition(Self.currentQueueIds.contains(id), message(), file: file, line: line)
     }
     
-    @discardableResult private func withTaskId<R>(
+    @discardableResult private func withQueueID<R>(
         operation: () async throws -> R,
         isolation: isolated (any Actor)? = #isolation,
         file: String = #fileID,

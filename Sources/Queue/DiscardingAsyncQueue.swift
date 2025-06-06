@@ -66,7 +66,7 @@ public struct DiscardingAsyncQueue: Sendable {
         @_inheritActorContext @_implicitSelfCapture operation: () async throws -> Success
     ) async throws -> Success {
         let (start, end) = primitiveQueue.makeSemaphores()
-        return try await withTaskId {
+        return try await withQueueID {
             defer { end.signal() }
             
             // Stop waiting if task is cancelled.
@@ -102,7 +102,7 @@ public struct DiscardingAsyncQueue: Sendable {
         
         let (start, end) = primitiveQueue.makeSemaphores()
         return Task {
-            try await withTaskId {
+            try await withQueueID {
                 defer { end.signal() }
                 
                 // Stop waiting if task is cancelled.
@@ -132,7 +132,7 @@ extension DiscardingAsyncQueue {
         precondition(Self.currentQueueIds.contains(id), message(), file: file, line: line)
     }
     
-    @discardableResult private func withTaskId<R>(
+    @discardableResult private func withQueueID<R>(
         operation: () async throws -> R,
         isolation: isolated (any Actor)? = #isolation,
         file: String = #fileID,

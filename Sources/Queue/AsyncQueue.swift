@@ -62,7 +62,7 @@ public struct AsyncQueue: Sendable {
         @_inheritActorContext @_implicitSelfCapture operation: () async throws -> Success
     ) async rethrows -> Success {
         let (start, end) = primitiveQueue.makeSemaphores()
-        return try await withTaskId {
+        return try await withQueueID {
             defer { end.signal() }
             await start.wait()
             return try await operation()
@@ -96,7 +96,7 @@ public struct AsyncQueue: Sendable {
         
         let (start, end) = primitiveQueue.makeSemaphores()
         return Task {
-            await withTaskId {
+            await withQueueID {
                 defer { end.signal() }
                 await start.wait()
                 
@@ -131,7 +131,7 @@ public struct AsyncQueue: Sendable {
         
         let (start, end) = primitiveQueue.makeSemaphores()
         return Task {
-            try await withTaskId {
+            try await withQueueID {
                 defer { end.signal() }
                 await start.wait()
                 
@@ -159,7 +159,7 @@ extension AsyncQueue {
         precondition(Self.currentQueueIds.contains(id), message(), file: file, line: line)
     }
     
-    @discardableResult private func withTaskId<R>(
+    @discardableResult private func withQueueID<R>(
         operation: () async throws -> R,
         isolation: isolated (any Actor)? = #isolation,
         file: String = #fileID,
