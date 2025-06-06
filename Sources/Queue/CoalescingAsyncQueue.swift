@@ -213,3 +213,18 @@ public struct CoalescingAsyncQueue: Sendable {
         return task
     }
 }
+
+extension CoalescingAsyncQueue: Identifiable {
+    /// The identity of a ``CoalescingAsyncQueue``.
+    public struct ID: Hashable, Sendable {
+        private let id: PrimitiveAsyncQueue.ID
+        
+        init(id: PrimitiveAsyncQueue.ID) {
+            self.id = id
+        }
+    }
+    
+    public var id: ID {
+        ID(id: primitiveQueue.id)
+    }
+}

@@ -106,3 +106,18 @@ public struct DiscardingAsyncQueue: Sendable {
         }
     }
 }
+
+extension DiscardingAsyncQueue: Identifiable {
+    /// The identity of a ``DiscardingAsyncQueue``.
+    public struct ID: Hashable, Sendable {
+        private let id: PrimitiveAsyncQueue.ID
+        
+        init(id: PrimitiveAsyncQueue.ID) {
+            self.id = id
+        }
+    }
+    
+    public var id: ID {
+        ID(id: primitiveQueue.id)
+    }
+}

@@ -131,3 +131,18 @@ public struct AsyncQueue: Sendable {
         }
     }
 }
+
+extension AsyncQueue: Identifiable {
+    /// The identity of an ``AsyncQueue``.
+    public struct ID: Hashable, Sendable {
+        private let id: PrimitiveAsyncQueue.ID
+        
+        init(id: PrimitiveAsyncQueue.ID) {
+            self.id = id
+        }
+    }
+    
+    public var id: ID {
+        ID(id: primitiveQueue.id)
+    }
+}
