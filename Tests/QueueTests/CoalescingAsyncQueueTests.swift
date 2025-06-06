@@ -80,6 +80,94 @@ struct CoalescingAsyncQueueTests {
     }
     
     @Test
+    func perform_returns_non_sendable_value() async throws {
+        class NonSendable { }
+        
+        @globalActor actor MyGlobalActor {
+            static let shared = MyGlobalActor()
+        }
+        
+        let queue = CoalescingAsyncQueue()
+        
+        do {
+            let value = NonSendable()
+            let result = try await queue.perform {
+                return value
+            }
+            #expect(result === value)
+        }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform { @MyGlobalActor in
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        do {
+            let _ = try await queue.perform {
+                return NonSendable()
+            }
+        }
+        
+        do {
+            let _ = try await queue.perform { @MyGlobalActor in
+                return NonSendable()
+            }
+        }
+    }
+    
+    @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
+    func perform_returns_non_sendable_value(
+        policy: CoalescingAsyncQueue.Policy
+    ) async throws {
+        class NonSendable { }
+        
+        @globalActor actor MyGlobalActor {
+            static let shared = MyGlobalActor()
+        }
+        
+        let queue = CoalescingAsyncQueue()
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform(policy: policy) {
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform(policy: policy) { @MyGlobalActor in
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        do {
+            let _ = try await queue.perform(policy: policy) {
+                return NonSendable()
+            }
+        }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let _ = try await queue.perform(policy: policy) { @MyGlobalActor in
+        //         return NonSendable()
+        //     }
+        // }
+    }
+
+    @Test
     func perform_rethrows_thrown_error() async throws {
         struct TestError: Error { }
         let queue = CoalescingAsyncQueue()
@@ -543,6 +631,130 @@ struct CoalescingAsyncQueueTests {
         }
     }
     
+    // MARK: - Serialization precondition
+    
+    @Test
+    func preconditionSerialized() async throws {
+        let queue = CoalescingAsyncQueue()
+        
+        // Test all ways to run an operation:
+        // - perform
+        // - addTask
+        
+        try await queue.perform {
+            queue.preconditionSerialized()
+        }
+        
+        try await queue
+            .addTask {
+                queue.preconditionSerialized()
+            }
+            .value
+    }
+    
+    @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
+    func preconditionSerialized(
+        policy: CoalescingAsyncQueue.Policy
+    ) async throws {
+        let queue = CoalescingAsyncQueue()
+        
+        // Test all ways to run an operation:
+        // - perform(policy:)
+        // - addTask(policy:)
+        
+        try await queue.perform(policy: policy) {
+            queue.preconditionSerialized()
+        }
+        
+        try await queue
+            .addTask(policy: policy) {
+                queue.preconditionSerialized()
+            }
+            .value
+    }
+    
+    @Test
+    func preconditionSerialized_for_nested_queues() async throws {
+        let queue1 = CoalescingAsyncQueue()
+        let queue2 = CoalescingAsyncQueue()
+        
+        // Test all combinations:
+        // - perform
+        // - addTask
+        
+        try await queue2.perform {
+            try await queue1.perform {
+                queue2.preconditionSerialized()
+                queue1.preconditionSerialized()
+            }
+            
+            try await queue1
+                .addTask {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+        }
+        
+        try await queue2
+            .addTask {
+                try await queue1.perform {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                try await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
+    }
+    
+    @Test(arguments: [CoalescingAsyncQueue.Policy.required, .discardable])
+    func preconditionSerialized_for_nested_queues(
+        policy: CoalescingAsyncQueue.Policy
+    ) async throws {
+        let queue1 = CoalescingAsyncQueue()
+        let queue2 = CoalescingAsyncQueue()
+        
+        // Test all combinations:
+        // - perform(policy:)
+        // - addTask(policy:)
+        
+        try await queue2.perform(policy: policy) {
+            try await queue1.perform(policy: policy) {
+                queue2.preconditionSerialized()
+                queue1.preconditionSerialized()
+            }
+            
+            try await queue1
+                .addTask(policy: policy) {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+        }
+        
+        try await queue2
+            .addTask(policy: policy) {
+                try await queue1.perform(policy: policy) {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                try await queue1
+                    .addTask(policy: policy) {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
+    }
+
     // MARK: - Isolation
     
     @Test

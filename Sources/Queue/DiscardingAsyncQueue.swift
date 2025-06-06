@@ -33,11 +33,14 @@
 ///
 /// - ``init()``
 ///
-/// ### Performing Operations
+/// ### Instance Methods
 ///
-/// - ``perform(operation:)``
 /// - ``addTask(operation:)``
+/// - ``perform(operation:)``
+/// - ``preconditionSerialized(_:file:line:)``
 public struct DiscardingAsyncQueue: Sendable {
+    @TaskLocal private static var currentQueueIds = Set<ID>()
+    
     private let primitiveQueue = PrimitiveAsyncQueue()
     
     public init() { }
@@ -60,15 +63,17 @@ public struct DiscardingAsyncQueue: Sendable {
     ///   current task is cancelled before the previously enqueued
     ///   operations complete.
     public func perform<Success>(
-        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> sending Success
-    ) async throws -> sending Success {
+        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> Success
+    ) async throws -> Success {
         let (start, end) = primitiveQueue.makeSemaphores()
-        defer { end.signal() }
-        
-        // Stop waiting if task is cancelled.
-        try await start.waitUnlessCancelled()
-        
-        return try await operation()
+        return try await withTaskId {
+            defer { end.signal() }
+            
+            // Stop waiting if task is cancelled.
+            try await start.waitUnlessCancelled()
+            
+            return try await operation()
+        }
     }
     
     /// Returns an unstructured Task that runs the given operation.
@@ -97,12 +102,64 @@ public struct DiscardingAsyncQueue: Sendable {
         
         let (start, end) = primitiveQueue.makeSemaphores()
         return Task {
-            defer { end.signal() }
-            
-            // Stop waiting if task is cancelled.
-            try await start.waitUnlessCancelled()
-            
-            return try await operation()
+            try await withTaskId {
+                defer { end.signal() }
+                
+                // Stop waiting if task is cancelled.
+                try await start.waitUnlessCancelled()
+                
+                return try await operation()
+            }
         }
+    }
+}
+
+extension DiscardingAsyncQueue {
+    /// Stops program execution if the current task is not executing an
+    /// operation of this queue.
+    ///
+    /// - Parameters:
+    ///   - message: The message to print if the assertion fails.
+    ///   - file: The file name to print if the assertion fails. The default
+    ///     is where this method was called.
+    ///   - line: The line number to print if the assertion fails The
+    ///     default is where this method was called.
+    public func preconditionSerialized(
+        _ message: @autoclosure () -> String = String(),
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) {
+        precondition(Self.currentQueueIds.contains(id), message(), file: file, line: line)
+    }
+    
+    @discardableResult private func withTaskId<R>(
+        operation: () async throws -> R,
+        isolation: isolated (any Actor)? = #isolation,
+        file: String = #fileID,
+        line: UInt = #line
+    ) async rethrows -> R {
+        var ids = Self.currentQueueIds
+        ids.insert(id)
+        return try await Self.$currentQueueIds.withValue(
+            ids,
+            operation: operation,
+            isolation: isolation,
+            file: file,
+            line: line)
+    }
+}
+
+extension DiscardingAsyncQueue: Identifiable {
+    /// The identity of a ``DiscardingAsyncQueue``.
+    public struct ID: Hashable, Sendable {
+        private let id: PrimitiveAsyncQueue.ID
+        
+        init(id: PrimitiveAsyncQueue.ID) {
+            self.id = id
+        }
+    }
+    
+    public var id: ID {
+        ID(id: primitiveQueue.id)
     }
 }

@@ -51,6 +51,47 @@ struct AsyncQueueTests {
     }
     
     @Test
+    func perform_returns_non_sendable_value() async throws {
+        class NonSendable { }
+        
+        @globalActor actor MyGlobalActor {
+            static let shared = MyGlobalActor()
+        }
+        
+        let queue = AsyncQueue()
+        
+        do {
+            let value = NonSendable()
+            let result = await queue.perform {
+                return value
+            }
+            #expect(result === value)
+        }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = await queue.perform { @MyGlobalActor in
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        do {
+            let _ = await queue.perform {
+                return NonSendable()
+            }
+        }
+        
+        do {
+            let _ = await queue.perform { @MyGlobalActor in
+                return NonSendable()
+            }
+        }
+    }
+    
+    @Test
     func perform_rethrows_thrown_error() async throws {
         struct TestError: Error { }
         let queue = AsyncQueue()
@@ -286,6 +327,116 @@ struct AsyncQueueTests {
         
         wrapperTask.cancel()
         await wrapperTask.value
+    }
+    
+    // MARK: - Serialization precondition
+    
+    @Test
+    func preconditionSerialized() async throws {
+        let queue = AsyncQueue()
+        
+        // Test all ways to run an operation:
+        // - perform
+        // - addTask (non-throwing)
+        // - addTask (throwing)
+        
+        await queue.perform {
+            queue.preconditionSerialized()
+        }
+        
+        await queue
+            .addTask {
+                queue.preconditionSerialized()
+            }
+            .value
+        
+        try await queue
+            .addTask {
+                try Task.checkCancellation()
+                queue.preconditionSerialized()
+            }
+            .value
+    }
+    
+    @Test
+    func preconditionSerialized_for_nested_queues() async throws {
+        let queue1 = AsyncQueue()
+        let queue2 = AsyncQueue()
+        
+        // Test all combinations:
+        // - perform
+        // - addTask (non-throwing)
+        // - addTask (throwing)
+        
+        await queue2.perform {
+            await queue1.perform {
+                queue2.preconditionSerialized()
+                queue1.preconditionSerialized()
+            }
+            
+            await queue1
+                .addTask {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+            
+            try? await queue1
+                .addTask {
+                    try Task.checkCancellation()
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+        }
+        
+        await queue2
+            .addTask {
+                await queue1.perform {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+                
+                try? await queue1
+                    .addTask {
+                        try Task.checkCancellation()
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
+        
+        try await queue2
+            .addTask {
+                await queue1.perform {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+                
+                try await queue1
+                    .addTask {
+                        try Task.checkCancellation()
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
     }
     
     // MARK: - Isolation

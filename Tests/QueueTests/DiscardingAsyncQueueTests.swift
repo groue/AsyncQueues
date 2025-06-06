@@ -51,6 +51,47 @@ struct DiscardingAsyncQueueTests {
     }
     
     @Test
+    func perform_returns_non_sendable_value() async throws {
+        class NonSendable { }
+        
+        @globalActor actor MyGlobalActor {
+            static let shared = MyGlobalActor()
+        }
+        
+        let queue = DiscardingAsyncQueue()
+        
+        do {
+            let value = NonSendable()
+            let result = try await queue.perform {
+                return value
+            }
+            #expect(result === value)
+        }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform { @MyGlobalActor in
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
+        
+        do {
+            let _ = try await queue.perform {
+                return NonSendable()
+            }
+        }
+        
+        do {
+            let _ = try await queue.perform { @MyGlobalActor in
+                return NonSendable()
+            }
+        }
+    }
+    
+    @Test
     func perform_rethrows_thrown_error() async throws {
         struct TestError: Error { }
         let queue = DiscardingAsyncQueue()
@@ -245,6 +286,67 @@ struct DiscardingAsyncQueueTests {
         
         wrapperTask.cancel()
         await wrapperTask.value
+    }
+    
+    // MARK: - Serialization precondition
+    
+    @Test
+    func preconditionSerialized() async throws {
+        let queue = DiscardingAsyncQueue()
+        
+        // Test all ways to run an operation:
+        // - perform
+        // - addTask
+        
+        try await queue.perform {
+            queue.preconditionSerialized()
+        }
+        
+        try await queue
+            .addTask {
+                queue.preconditionSerialized()
+            }
+            .value
+    }
+    
+    @Test
+    func preconditionSerialized_for_nested_queues() async throws {
+        let queue1 = DiscardingAsyncQueue()
+        let queue2 = DiscardingAsyncQueue()
+        
+        // Test all combinations:
+        // - perform
+        // - addTask
+        
+        try await queue2.perform {
+            try await queue1.perform {
+                queue2.preconditionSerialized()
+                queue1.preconditionSerialized()
+            }
+            
+            try await queue1
+                .addTask {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+        }
+        
+        try await queue2
+            .addTask {
+                try await queue1.perform {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                try await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
     }
     
     // MARK: - Isolation

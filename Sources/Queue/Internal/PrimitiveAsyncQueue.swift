@@ -1,5 +1,5 @@
 /// A queue that serializes tasks.
-final class PrimitiveAsyncQueue: Sendable {
+final class PrimitiveAsyncQueue: Identifiable, Sendable {
     typealias Operation = @Sendable () async -> Void
     
     private let queueContinuation: AsyncStream<Operation>.Continuation
