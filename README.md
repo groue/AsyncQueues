@@ -4,6 +4,8 @@
 
 **Requirements**: iOS 16.0+ / macOS 10.15+ • Swift 6.1+ / Xcode 16.4+
 
+[**📖 Documentation**](https://swiftpackageindex.com/groue/Queue/documentation/queue)
+
 ---
 
 ## Context
