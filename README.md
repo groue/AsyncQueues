@@ -40,7 +40,7 @@ await serialTask.value
 
 Such hand-made code gets more and more complicated as application needs grow:
 
-- How to wait for an operation to complete? How to return a result for an operation?
+- How to wait for an operation to complete? How to return a result from an operation?
 - How to deal with both throwing and non-throwing operations?
 - How to deal with cancellation? How to cancel one particular operation without cancelling other ones?
 - How to deal with the cancellation of non-throwing operations, since they can not throw `CancellationError`?
