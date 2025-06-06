@@ -12,13 +12,13 @@ They differ in their way to handle task cancellation:
 
 - ``DiscardingAsyncQueue`` eagerly discards cancelled operations, without waiting for the completion of previously enqueued operations. All operations may throw `CancellationError`.
 
-- ``CoalescingAsyncQueue`` eagerly discards cancelled operations, like `DiscardingAsyncQueue`. It can also cancel "discardable" operations that are replaced by another operation. It is suitable for idempotent operations, such as operations that synchronize app data with server data.
+- ``CoalescingAsyncQueue`` eagerly discards cancelled operations, like `DiscardingAsyncQueue`. It can also coalesce operations by cancelling "discardable" operations that are replaced by another operation.
 
 💡 If your app does not intend to cancel operations, use ``AsyncQueue``. You won't have to deal with errors for non-throwing operations.
 
 💡 If your app has to deal with cancellation, ``DiscardingAsyncQueue`` helps cancelled operations complete as early as possible. In exchange, you'll have to deal with errors even for non-throwing operations.
 
-💡 If your app runs idempotent operations that can be discarded without consequences, consider ``CoalescingAsyncQueue``. 
+💡 If your app runs operations that can be discarded without consequences, consider ``CoalescingAsyncQueue``. 
 
 
 ## Usage
