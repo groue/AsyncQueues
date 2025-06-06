@@ -40,6 +40,8 @@
 /// - ``perform(operation:)``
 /// - ``preconditionSerialized(_:file:line:)``
 public struct AsyncQueue: Sendable {
+    /// The ids of the queues that are currently executing an operation.
+    /// It is a set because the user may nest queues.
     @TaskLocal private static var currentQueueIds = Set<ID>()
     
     private let primitiveQueue = PrimitiveAsyncQueue()
