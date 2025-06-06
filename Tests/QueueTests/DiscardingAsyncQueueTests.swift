@@ -288,6 +288,67 @@ struct DiscardingAsyncQueueTests {
         await wrapperTask.value
     }
     
+    // MARK: - Serialization precondition
+    
+    @Test
+    func preconditionSerialized() async throws {
+        let queue = DiscardingAsyncQueue()
+        
+        // Test all ways to run an operation:
+        // - perform
+        // - addTask
+        
+        try await queue.perform {
+            queue.preconditionSerialized()
+        }
+        
+        try await queue
+            .addTask {
+                queue.preconditionSerialized()
+            }
+            .value
+    }
+    
+    @Test
+    func preconditionSerialized_for_nested_queues() async throws {
+        let queue1 = DiscardingAsyncQueue()
+        let queue2 = DiscardingAsyncQueue()
+        
+        // Test all combinations:
+        // - perform
+        // - addTask
+        
+        try await queue2.perform {
+            try await queue1.perform {
+                queue2.preconditionSerialized()
+                queue1.preconditionSerialized()
+            }
+            
+            try await queue1
+                .addTask {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                .value
+        }
+        
+        try await queue2
+            .addTask {
+                try await queue1.perform {
+                    queue2.preconditionSerialized()
+                    queue1.preconditionSerialized()
+                }
+                
+                try await queue1
+                    .addTask {
+                        queue2.preconditionSerialized()
+                        queue1.preconditionSerialized()
+                    }
+                    .value
+            }
+            .value
+    }
+    
     // MARK: - Isolation
     
     @Test

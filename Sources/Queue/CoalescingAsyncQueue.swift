@@ -42,12 +42,15 @@
 ///
 /// - ``init()``
 ///
-/// ### Performing Operations
+/// ### Instance Methods
 ///
+/// - ``addTask(policy:operation:)``
 /// - ``perform(operation:)``
 /// - ``perform(policy:operation:)``
-/// - ``addTask(policy:operation:)``
+/// - ``preconditionSerialized(_:file:line:)``
 public struct CoalescingAsyncQueue: Sendable {
+    @TaskLocal private static var currentQueueIds = Set<ID>()
+    
     /// Controls the execution of an operation started by `CoalescingAsyncQueue`.
     public enum Policy: Sendable {
         /// An operation run with the `required` policy is not cancelled by
@@ -97,12 +100,14 @@ public struct CoalescingAsyncQueue: Sendable {
         cancel?()
         
         let (start, end) = primitiveQueue.makeSemaphores()
-        defer { end.signal() }
-        
-        // Stop waiting if task is cancelled.
-        try await start.waitUnlessCancelled()
-        
-        return try await operation()
+        return try await withTaskId {
+            defer { end.signal() }
+            
+            // Stop waiting if task is cancelled.
+            try await start.waitUnlessCancelled()
+            
+            return try await operation()
+        }
     }
     
     /// Returns the result of the given operation.
@@ -191,12 +196,14 @@ public struct CoalescingAsyncQueue: Sendable {
         let (task, cancel) = cancellableMutex.withLock { cancel in
             let (start, end) = primitiveQueue.makeSemaphores()
             let task = Task {
-                defer { end.signal() }
-                
-                // Stop waiting if task is cancelled.
-                try await start.waitUnlessCancelled()
-                
-                return try await operation()
+                try await withTaskId {
+                    defer { end.signal() }
+                    
+                    // Stop waiting if task is cancelled.
+                    try await start.waitUnlessCancelled()
+                    
+                    return try await operation()
+                }
             }
             
             let toCancel = cancel
@@ -211,6 +218,41 @@ public struct CoalescingAsyncQueue: Sendable {
         
         cancel?()
         return task
+    }
+}
+
+extension CoalescingAsyncQueue {
+    /// Stops program execution if the current task is not executing an
+    /// operation of this queue.
+    ///
+    /// - Parameters:
+    ///   - message: The message to print if the assertion fails.
+    ///   - file: The file name to print if the assertion fails. The default
+    ///     is where this method was called.
+    ///   - line: The line number to print if the assertion fails The
+    ///     default is where this method was called.
+    public func preconditionSerialized(
+        _ message: @autoclosure () -> String = String(),
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) {
+        precondition(Self.currentQueueIds.contains(id), message(), file: file, line: line)
+    }
+    
+    @discardableResult private func withTaskId<R>(
+        operation: () async throws -> R,
+        isolation: isolated (any Actor)? = #isolation,
+        file: String = #fileID,
+        line: UInt = #line
+    ) async rethrows -> R {
+        var ids = Self.currentQueueIds
+        ids.insert(id)
+        return try await Self.$currentQueueIds.withValue(
+            ids,
+            operation: operation,
+            isolation: isolation,
+            file: file,
+            line: line)
     }
 }
 
