@@ -239,7 +239,7 @@ extension CoalescingAsyncQueue {
         precondition(Self.currentQueueIds.contains(id), message(), file: file, line: line)
     }
     
-    @discardableResult private func withQueueID<R>(
+    private func withQueueID<R>(
         operation: () async throws -> R,
         isolation: isolated (any Actor)? = #isolation,
         file: String = #fileID,
