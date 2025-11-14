@@ -65,8 +65,8 @@ public struct DiscardingAsyncQueue: Sendable {
     ///   current task is cancelled before the previously enqueued
     ///   operations complete.
     public func perform<Success>(
-        @_inheritActorContext @_implicitSelfCapture operation: () async throws -> Success
-    ) async throws -> Success {
+        @_inheritActorContext @_implicitSelfCapture operation: sending () async throws -> sending Success
+    ) async throws -> sending Success {
         let (start, end) = primitiveQueue.makeSemaphores()
         return try await withQueueID {
             defer { end.signal() }

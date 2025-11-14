@@ -54,19 +54,23 @@ struct DiscardingAsyncQueueTests {
     func perform_returns_non_sendable_value() async throws {
         class NonSendable { }
         
-        @globalActor actor MyGlobalActor {
-            static let shared = MyGlobalActor()
-        }
-        
         let queue = DiscardingAsyncQueue()
         
         do {
-            let value = NonSendable()
-            let result = try await queue.perform {
-                return value
+            let _ = try await queue.perform {
+                return NonSendable()
             }
-            #expect(result === value)
         }
+        
+        // Won't compile.
+        //
+        // do {
+        //     let value = NonSendable()
+        //     let result = try await queue.perform {
+        //         return value
+        //     }
+        //     #expect(result === value)
+        // }
         
         // Won't compile.
         //
@@ -78,17 +82,17 @@ struct DiscardingAsyncQueueTests {
         //     #expect(result === value)
         // }
         
-        do {
-            let _ = try await queue.perform {
-                return NonSendable()
-            }
-        }
-        
-        do {
-            let _ = try await queue.perform { @MyGlobalActor in
-                return NonSendable()
-            }
-        }
+        // Won't compile.
+        //
+        // do {
+        //     @globalActor actor MyGlobalActor {
+        //         static let shared = MyGlobalActor()
+        //     }
+        //
+        //     let _ = try await queue.perform { @MyGlobalActor in
+        //         return NonSendable()
+        //     }
+        // }
     }
     
     @Test
